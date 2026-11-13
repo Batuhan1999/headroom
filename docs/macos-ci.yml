@@ -1,0 +1,19 @@
+name: Build and test
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Swift toolchain
+        run: swift --version
+      - name: Protocol and policy tests
+        run: swift test
+      - name: Build native app
+        run: bash scripts/build.sh
+      - name: Verify bundle signature
+        run: codesign --verify --deep --strict dist/Headroom.app
