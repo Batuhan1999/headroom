@@ -18,12 +18,12 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Headroom</string>
 <key>CFBundleExecutable</key><string>Headroom</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.3.0</string>
-<key>CFBundleVersion</key><string>3</string>
+<key>CFBundleShortVersionString</key><string>0.3.1</string>
+<key>CFBundleVersion</key><string>4</string>
 <key>LSMinimumSystemVersion</key><string>14.2</string>
 <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>Headroom modes</string><key>CFBundleURLSchemes</key><array><string>headroom</string></array></dict></array>
 <key>LSUIElement</key><true/>
-<key>NSBluetoothAlwaysUsageDescription</key><string>Headroom reads playback and battery status and controls your Sony WH-1000XM5 connection and power.</string>
+<key>NSBluetoothAlwaysUsageDescription</key><string>Headroom reads playback and battery status and controls your Sony WH-1000XM5 or WH-1000XM6 connection and power.</string>
 <key>NSAudioCaptureUsageDescription</key><string>Headroom checks headphone output levels locally to detect silence. No audio is saved or sent.</string>
 </dict></plist>
 PLIST

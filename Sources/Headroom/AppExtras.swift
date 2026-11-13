@@ -59,7 +59,7 @@ final class AppExtras: NSObject, UNUserNotificationCenterDelegate {
             guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true else { return }
             let content = UNMutableNotificationContent()
             content.title = "Headphone battery is low"
-            content.body = "WH-1000XM5 has \(level)% remaining."
+            content.body = "\(model.modelName) has \(level)% remaining."
             try? await center.add(UNNotificationRequest(identifier: "headroom-low-battery", content: content, trigger: nil))
         }
     }
@@ -80,7 +80,7 @@ final class AppExtras: NSObject, UNUserNotificationCenterDelegate {
             Image(systemName: mode.symbol).font(.system(size: 23)).frame(width: 30)
             VStack(alignment: .leading, spacing: 3) {
                 Text(mode.title).font(.system(size: 14, weight: .semibold))
-                Text("WH-1000XM5").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(model.modelName).font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }.padding(16)
         let host = NSHostingView(rootView: content)

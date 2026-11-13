@@ -10,6 +10,7 @@ struct HeadphoneChoice: Identifiable {
     let id: String
     let name: String
     let connected: Bool
+    let model: SonyModel
 }
 
 @Observable
@@ -19,7 +20,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         didSet {
             guard selectedID != oldValue, !demo else { return }
             stopLink(); cachedDevice = nil; pairedRefreshAt = 0; UserDefaults.standard.set(selectedID, forKey: "HeadphoneAddress")
-            battery = nil; firmware = nil; lowBattery = LowBattery(); note("Selected WH-1000XM5"); refresh()
+            battery = nil; firmware = nil; lowBattery = LowBattery(); note("Selected headphones"); refresh()
         }
     }
     var protect = UserDefaults.standard.object(forKey: "Protect") as? Bool ?? true {
@@ -40,7 +41,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
     var idleMinutes = UserDefaults.standard.object(forKey: "IdleMinutes") as? Int ?? 15 {
         didSet { UserDefaults.standard.set(idleMinutes, forKey: "IdleMinutes"); idle.reset() }
     }
-    var status = "Looking for your WH-1000XM5"
+    var status = "Looking for your Sony headphones"
     var bluetoothStatus = "Checking Bluetooth permission…"
     var bluetoothReady = false
     var linked = false
@@ -106,6 +107,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
     @ObservationIgnored private var callAmbience = CallAmbience()
     @ObservationIgnored private var callWasEnabled = false
     @ObservationIgnored private var featurePollAt: TimeInterval = 0
+    @ObservationIgnored private var cachedLocalAddress: String?
     @ObservationIgnored private var cachedDevice: IOBluetoothDevice?
     @ObservationIgnored private var pairedRefreshAt: TimeInterval = 0
     @ObservationIgnored private var audioPollInFlight = false
@@ -120,6 +122,10 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
     @ObservationIgnored private var session = SonySession()
     @ObservationIgnored private var idle = IdlePolicy()
     @ObservationIgnored private var tickTimer: Timer?
+    @ObservationIgnored private var activityTimer: Timer?
+    @ObservationIgnored private var levelPeak: Float = 0
+    @ObservationIgnored private var instantSilence: Bool?
+    @ObservationIgnored private var lastSourceRequestAccepted = false
     @ObservationIgnored private var pollAt: TimeInterval = 0
     @ObservationIgnored private var retryAt: TimeInterval = 0
     @ObservationIgnored private var openedAt: TimeInterval = 0
@@ -161,6 +167,11 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         result.lidClosed = lidClosed; result.phoneOnly = phoneOnly; result.shutdown = shutdownPending
         return result
     }
+    var selectedModel: SonyModel { choices.first { $0.id == selectedID }?.model ?? .xm5 }
+    var modelName: String { selectedModel.rawValue }
+    private var featureQueries: [SonyRequest] {
+        SonyRequest.featureQueries.map { $0 == .equalizer ? .equalizer(layout: selectedModel.eqLayout) : $0 }
+    }
     var selectedName: String { choices.first { $0.id == selectedID }?.name ?? "WH-1000XM5" }
     private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
     private var selectedDevice: IOBluetoothDevice? {
@@ -169,7 +180,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
     }
     var localAddress: String? {
         guard !demo, bluetoothReady else { return nil }
-        return IOBluetoothHostController.default()?.addressAsString()?.replacingOccurrences(of: "-", with: ":").uppercased()
+        return cachedLocalAddress
     }
     var onlyLocalMac: Bool {
         guard peers.count == 1, let localAddress else { return false }
@@ -184,7 +195,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         self.demo = demo; self.diagnosticURL = diagnosticURL
         super.init()
         if demo {
-            choices = [.init(id: "demo", name: "WH-1000XM5", connected: true)]
+            choices = [.init(id: "demo", name: "WH-1000XM5", connected: true, model: .xm5)]
             selectedID = "demo"; linked = true; connected = true; battery = 72; firmware = "demo"
             status = "Preview · no headphones controlled"; bluetoothStatus = "Preview data"; bluetoothReady = true
             playback = .paused; idleStatus = "Another source may be active · automatic shutdown paused"
@@ -234,10 +245,11 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         }
         if central.state == .unknown, bluetoothReady { return }
         bluetoothReady = central.state == .poweredOn
+        if bluetoothReady { cacheLocalAddress() } else { cachedLocalAddress = nil }
         switch CBCentralManager.authorization {
         case .denied, .restricted:
             bluetoothStatus = "Bluetooth access needed in System Settings → Privacy & Security → Bluetooth"
-        case .notDetermined: bluetoothStatus = "Allow Bluetooth access to find your XM5s"
+        case .notDetermined: bluetoothStatus = "Allow Bluetooth access to find your headphones"
         default:
             bluetoothStatus = central.state == .poweredOn ? "Bluetooth is on" : "Turn on Bluetooth in System Settings"
         }
@@ -261,7 +273,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
                 guard let self, generation == self.bluetoothGeneration,
                       CBCentralManager.authorization == .allowedAlways,
                       poweredOn, !self.bluetoothReady else { return }
-                self.bluetoothReady = true; self.bluetoothStatus = "Bluetooth is on"
+                self.bluetoothReady = true; self.cacheLocalAddress(); self.bluetoothStatus = "Bluetooth is on"
                 if self.connectNote == nil {
                     self.connectNote = IOBluetoothDevice.register(forConnectNotifications: self,
                         selector: #selector(HeadphoneController.deviceConnected(_:device:)))
@@ -278,8 +290,8 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         }
         if now >= pairedRefreshAt {
             pairedRefreshAt = now + 15
-            let devices = ((IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []).filter(Self.isXM5)
-            choices = devices.map { HeadphoneChoice(id: $0.addressString ?? "", name: $0.nameOrAddress, connected: $0.isConnected()) }
+            let devices = ((IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []).filter(Self.isSupported)
+            choices = devices.map { HeadphoneChoice(id: $0.addressString ?? "", name: $0.nameOrAddress, connected: $0.isConnected(), model: SonyModel.identify($0.nameOrAddress)!) }
             cachedDevice = devices.first { $0.addressString == selectedID }
             if selectedID.isEmpty, choices.count == 1 { selectedID = choices[0].id }
         }
@@ -293,12 +305,12 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
                 notice = "Power-off was requested, but the headphones are still connected. Check them before retrying."
             }
         } else if choices.isEmpty {
-            status = "No paired WH-1000XM5 found"
-        } else if selectedID.isEmpty { status = "Choose your WH-1000XM5" }
+            status = "No paired WH-1000XM5 or WH-1000XM6 found"
+        } else if selectedID.isEmpty { status = "Choose your headphones" }
         else if policy.blocked { status = phoneOnly ? "Phone only · Mac connection blocked" : "Mac locked, asleep or lid closed · connection blocked" }
         else if linked { status = "Connected · monitoring headphone status" }
         else if connected { status = "Opening Sony control channel…" }
-        else { status = "XM5s are disconnected from this Mac" }
+        else { status = "Headphones are disconnected from this Mac" }
     }
 
     private func tick() {
@@ -316,7 +328,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         if let deadline = openDeadline, now >= deadline { failLink("Sony control channel did not open") }
         if let since = connectingAt, now - since > 15 {
             connectingAt = nil; reconnectPlan.failed(now: now)
-            notice = reconnectPlan.pending && reconnect ? "Bluetooth is still waking. Retrying shortly…" : "Connection timed out. Turn on the XM5s and retry."
+            notice = reconnectPlan.pending && reconnect ? "Bluetooth is still waking. Retrying shortly…" : "Connection timed out. Turn on the headphones and retry."
         }
         if linked {
             write(session.tick(now: now))
@@ -338,7 +350,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         }
         if linked, now - featurePollAt >= 30 {
             featurePollAt = now
-            SonyRequest.featureQueries.forEach(requestSony)
+            featureQueries.forEach(requestSony)
             requestSony(.autoOffSetting)
         }
         let input = IdleInput(enabled: idleEnabled, keepANC: keepANC, connected: linked,
@@ -397,7 +409,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         let result = device.openConnection(self)
         if result != kIOReturnSuccess {
             connectingAt = nil; reconnectPlan.failed(now: now)
-            notice = reconnectPlan.pending && reconnect ? "Bluetooth connection failed (\(result)). Retrying shortly…" : "Could not connect (\(result)). Are the XM5s on?"
+            notice = reconnectPlan.pending && reconnect ? "Bluetooth connection failed (\(result)). Retrying shortly…" : "Could not connect (\(result)). Are the headphones on?"
         }
         note("Requested Mac connection")
     }
@@ -428,7 +440,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
             self.note("Headphones came back on; resumed monitoring")
         }
         retryAt = now + 1
-        if policy.blocked { self.note("Blocked an XM5 reconnection to the Mac"); enforce() }
+        if policy.blocked { self.note("Blocked a headphone reconnection to the Mac"); enforce() }
         refresh()
     }
 
@@ -463,7 +475,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         guard error == kIOReturnSuccess, !policy.blocked else { failLink("Control channel could not open (\(error))"); return }
         linked = true; session = SonySession(); openedAt = now; pollAt = now; notice = nil
         note("Sony control channel opened; reading status")
-        for request in [SonyRequest.initialize, .firmware, .battery, .playback, .autoOffCapabilities, .autoOffSetting] + SonyRequest.featureQueries { requestSony(request) }
+        for request in [SonyRequest.initialize, .firmware, .battery, .playback, .autoOffCapabilities, .autoOffSetting] + featureQueries { requestSony(request) }
     }
 
     func rfcommChannelData(_ rfcommChannel: IOBluetoothRFCOMMChannel!, data pointer: UnsafeMutableRawPointer!, length: Int) {
@@ -493,6 +505,10 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
                 if let listWithClass { requestSony(.peers(withClass: listWithClass)) }
             case .peers(let devices):
                 peers = devices; lastPeers = now
+                if lastSourceRequestAccepted, let target = sourceHandoff.target,
+                   devices.contains(where: { $0.selected && $0.id.caseInsensitiveCompare(target) == .orderedSame }) {
+                    sourceHandoff.cancel(); sourceStatus = nil; lastSourceRequestAccepted = false
+                }
                 if peerSnapshot != devices {
                     if peerSnapshot?.first(where: { $0.selected })?.id != devices.first(where: { $0.selected })?.id {
                         sourceChangedAt = now
@@ -510,7 +526,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
             case .switched(let result, let target):
                 if sourceHandoff.target?.caseInsensitiveCompare(target) == .orderedSame {
                     if result == 0 {
-                        sourceStatus = "Source switch accepted"
+                        sourceStatus = "Source switch accepted"; lastSourceRequestAccepted = true
                     } else {
                         sourceHandoff.cancel()
                         let reason = [1: "the headphones rejected it", 2: "a call is active", 3: "that device has no audio connection", 4: "the voice assistant has priority"][Int(result)] ?? "the headphones returned code \(result)"
@@ -593,7 +609,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         let old = channel; channel = nil; linked = false; openDeadline = nil
         session = SonySession(); listWithClass = nil; playback = .unknown
         lastPlayback = nil; lastPeers = nil; peers = []; peerSnapshot = nil; idle.reset()
-        stopMeter(); headphoneOutputUID = nil; audioSnapshotAt = 0; recordingActivity = nil; pendingAutoOffAt = nil; localSilentSince = nil; sourceHandoff.cancel(); sourceStatus = nil; sourceAfterPause = nil
+        stopMeter(); headphoneOutputUID = nil; audioSnapshotAt = 0; recordingActivity = nil; pendingAutoOffAt = nil; localSilentSince = nil; sourceHandoff.cancel(); sourceStatus = nil; sourceAfterPause = nil; lastSourceRequestAccepted = false
         macStartDetector = MacAudioStartDetector(); macStartPendingUntil = 0
         codec = nil; noiseControl = nil; equalizer = nil; dsee = nil; speakToChat = nil
         chatOptions = nil; wearingPause = nil; noiseButton = nil; hardwareAutoOffCode = nil
@@ -620,7 +636,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         }
         let isMac = peer.id.caseInsensitiveCompare(localAddress ?? "") == .orderedSame
         notice = nil
-        sourceHandoff.begin(target: peer.id, isMac: isMac, now: now)
+        sourceHandoff.begin(target: peer.id, isMac: isMac, now: now); lastSourceRequestAccepted = false
         sourceStatus = "Switching to \(peer.name)…"
         // Explicit choices and fresh Mac playback release the old stream before taking playback rights.
         lastHandoff = now; localSilentSince = nil; idle.reset()
@@ -646,7 +662,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
             let confirmed = peers.contains { $0.selected && $0.id.caseInsensitiveCompare(target) == .orderedSame }
             sourceHandoff.cancel(); sourceAfterPause = nil
             sourceStatus = confirmed ? nil : "Source did not change; try pausing the other device first."
-            if !confirmed { setMacOutputSuspended(remotePeer?.selected == true) }
+            if !confirmed { notice = sourceStatus; setMacOutputSuspended(remotePeer?.selected == true) }
         } else if peers.contains(where: { $0.selected && $0.id.caseInsensitiveCompare(target) == .orderedSame }) {
             sourceStatus = sourceHandoff.targetIsMac ? "Mac selected" : "Phone selected"
         }
@@ -698,10 +714,13 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
             if active?.running != true { levelRetryAt = now + 15 }
         }
         guard let active else { return }
-        levelStatus = active.status
-        let value = active.consumePeak()
-        levelDB = value.peak > 0 ? max(-100, Double(20 * log10(value.peak))) : -100
-        measuredSilence = active.running && value.heardSound && !active.calibrating && now - value.sampledAt < 3 ? value.peak < 0.0001 : nil
+        if active.running { startActivityTimer() }
+        let reading = active.reading
+        measuredSilence = active.running && reading.heardSound && !active.calibrating && now - reading.sampledAt < 3
+            ? levelPeak < 0.0001 : nil
+        levelStatus = measuredSilence.map { $0 ? "Mac output is silent" : "Mac audio is audible" } ?? active.status
+        levelDB = levelPeak > 0 ? max(-100, Double(20 * log10(levelPeak))) : -100
+        levelPeak = 0
         if smartSwitching, remotePeer?.selected == true, !sourceHandoff.holdsMac(now: now), now - lastHandoff > 2 {
             setMacOutputSuspended(true)
         }
@@ -710,7 +729,34 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         }
     }
 
+    private func cacheLocalAddress() {
+        if cachedLocalAddress == nil {
+            cachedLocalAddress = IOBluetoothHostController.default()?.addressAsString()?
+                .replacingOccurrences(of: "-", with: ":").uppercased()
+        }
+    }
+
+    private func startActivityTimer() {
+        guard activityTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            self?.readAudioActivity()
+            self?.handoffSilentMac()
+        }
+        timer.tolerance = 0.02
+        RunLoop.main.add(timer, forMode: .common); activityTimer = timer
+    }
+
+    private func readAudioActivity() {
+        guard levelsEnabled, linked, !policy.blocked,
+              #available(macOS 14.2, *), let active = meter as? SilenceMeter else { return }
+        let value = active.consumePeak()
+        levelPeak = max(levelPeak, value.peak)
+        instantSilence = active.running && value.heardSound && !active.calibrating && now - value.sampledAt < 3
+            ? value.peak < 0.0001 : nil
+    }
+
     private func stopMeter() {
+        activityTimer?.invalidate(); activityTimer = nil; levelPeak = 0; instantSilence = nil
         if #available(macOS 14.2, *) { (meter as? SilenceMeter)?.stop() }
         meter = nil; measuredSilence = nil; levelDB = -100; macOutputSuspended = false
     }
@@ -779,30 +825,30 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
     }
 
     private func handoffSilentMac() {
-        if macStartDetector.observe(silence: measuredSilence, now: now) { macStartPendingUntil = now + 15 }
-        if measuredSilence == true || localIsSelected { macStartPendingUntil = 0 }
+        if macStartDetector.observe(silence: instantSilence, now: now) { macStartPendingUntil = now + 15 }
+        if instantSilence == true || localIsSelected { macStartPendingUntil = 0 }
         guard smartSwitching, !phoneTestRunning, linked, freshStatus,
               !policy.blocked, playback != .call, recordingActivity == false,
-              let remote = remotePeer, !sourceHandoff.isPending(now: now), now - lastHandoff > 6 else { localSilentSince = nil; return }
+              let remote = remotePeer else { localSilentSince = nil; return }
         if SourceHandoff.shouldRestoreMac(localSelected: localIsSelected, suspended: macOutputSuspended,
-            audible: measuredSilence.map { !$0 }, inCall: playback == .call) {
+            audible: instantSilence.map { !$0 }, inCall: playback == .call) {
             setMacOutputSuspended(false)
             note("Restored audible Mac output already selected by the headphones")
         }
-        if localIsSelected, measuredSilence == true {
+        if !localIsSelected, instantSilence == false, now < macStartPendingUntil,
+           let localAddress, let local = peers.first(where: { $0.id.caseInsensitiveCompare(localAddress) == .orderedSame }) {
+            switchTo(local); lastHandoff = now; macStartPendingUntil = 0
+            note("New Mac audio started; interrupted the phone and selected the Mac")
+            return
+        }
+        guard !sourceHandoff.isPending(now: now), now - lastHandoff > 6 else { return }
+        if localIsSelected, instantSilence == true {
             if localSilentSince == nil { localSilentSince = now }
             if now - localSilentSince! >= 8 {
                 switchTo(remote, manual: false); lastHandoff = now; localSilentSince = nil
                 note("Mac output stayed silent; released audio priority to the phone")
             }
-        } else {
-            localSilentSince = nil
-            if !localIsSelected, measuredSilence == false, now < macStartPendingUntil, now - sourceChangedAt > 2,
-               let localAddress, let local = peers.first(where: { $0.id.caseInsensitiveCompare(localAddress) == .orderedSame }) {
-                switchTo(local); lastHandoff = now; macStartPendingUntil = 0
-                note("New Mac audio started; interrupted the phone and selected the Mac")
-            }
-        }
+        } else { localSilentSince = nil }
     }
 
     func beginQuickIdleTest() {
@@ -815,7 +861,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
     }
 
     func quit() {
-        stopping = true; tickTimer?.invalidate(); connectNote?.unregister()
+        stopping = true; tickTimer?.invalidate(); activityTimer?.invalidate(); connectNote?.unregister()
         stopLink(); note("Quit; no further connection enforcement")
         NSApp.terminate(nil)
     }
@@ -842,10 +888,10 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
 
     private func writeDiagnostics(_ url: URL) {
         let data: [String: Any] = [
-            "app": "Headroom 0.3.0", "date": ISO8601DateFormatter().string(from: Date()),
-            "status": status, "bluetooth": bluetoothStatus, "pairedXM5Count": choices.count,
+            "app": "Headroom 0.3.1", "date": ISO8601DateFormatter().string(from: Date()),
+            "status": status, "bluetooth": bluetoothStatus, "pairedHeadphoneCount": choices.count,
             "connectedToMac": connected, "controlChannelOpen": linked,
-            "battery": battery as Any? ?? NSNull(), "firmware": firmware as Any? ?? NSNull(),
+            "model": modelName, "battery": battery as Any? ?? NSNull(), "firmware": firmware as Any? ?? NSNull(),
             "playback": playback.rawValue, "playbackFresh": freshStatus,
             "connectedSourceCount": peers.count, "onlyLocalMac": onlyLocalMac,
             "macAudioActive": macAudio as Any? ?? NSNull(), "idlePowerOffEnabled": idleEnabled,
@@ -872,8 +918,8 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         }
     }
 
-    private static func isXM5(_ device: IOBluetoothDevice) -> Bool {
-        device.nameOrAddress.uppercased().contains("WH-1000XM5")
+    private static func isSupported(_ device: IOBluetoothDevice) -> Bool {
+        SonyModel.identify(device.nameOrAddress) != nil
     }
     private static let serviceUUID: IOBluetoothSDPUUID? = {
         let uuid = UUID(uuidString: "956C7B26-D49A-4BA8-B03F-B17D393CB6E2")!

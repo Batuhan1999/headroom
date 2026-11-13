@@ -2,7 +2,7 @@
 
 Headroom uses SwiftUI and AppKit for a menu bar dropdown, IOBluetooth for Sony's RFCOMM control channel, and Core Audio for output activity. Swift alone keeps the bundle small and avoids a second compiler, FFI bridge or bundled runtime.
 
-- `Sources/HeadroomCore`: frame parser, serialized request/ACK session, typed WH-1000XM5 settings, connection and idle policies. No hardware required for tests.
+- `Sources/HeadroomCore`: frame parser, serialized request/ACK session, typed WH-1000XM5/XM6 settings, connection and idle policies. No hardware required for tests.
 - `Sources/Headroom`: Bluetooth lifecycle, device-scoped audio tap, sleep observer, native dropdown, notifications, hot key and HUD.
 - `Tests/HeadroomCoreTests`: captured Sony frames, malformed/truncated input, retries, source handoff, power-off safety, call restoration and battery thresholds.
 
@@ -17,9 +17,13 @@ The transport never replays queued mutations after reconnecting. Unknown playbac
 
 Hardware validation during development on a WH-1000XM5 (firmware 2.0.2) covered remote playing/paused reports, phone playback with a muted Mac stream, continuous phone playback through lid-close/wake, recovery after a transient reconnect error, manual shutdown and the silence timer's final-check shutdown path using a shortened 15-second test. These do not establish correctness for every app, call, firmware, dark-wake case or a full 15-minute run. Additional headphone controls use Sound Connect's published WH-1000XM5 layouts; the automated tests include its captured firmware 2.4.1 replies.
 
+XM6 support reuses the same transport, battery, source and system-setting commands. Its profile selects EQ layout `0x04` instead of `0x00`, with ten raw 0–12 band values and no Clear Bass. This is covered by protocol fixtures; it has not been validated on a physical XM6.
+
 ## Responsiveness
 
 Core Audio process and device scans run on a utility queue, once per cycle. The UI consumes a timestamped snapshot; stale snapshots become unknown and cannot satisfy idle checks. RFCOMM writes are asynchronous and retain their buffers until completion or channel close. The paired-device list is cached between refreshes. Optional diagnostic serialization, login-status queries and file writes run off the main thread.
+
+Fresh Mac output is checked every 100 ms using the existing in-memory peak; there is no debounce or repeated hardware scan on that fast path. Continuous audio does not repeatedly trigger a handoff. The status icon consumes its own mouse-down/up pair before AppKit tracking starts, and explicitly highlights while the panel is open. This avoids the default tracking loop clearing the highlight or reopening the panel on a second click. Command-drag still passes through for menu-bar reordering.
 
 The 300-point native panel fits its content, with scrolling at screen height. Opening it and changing sections do not use animations. Outside-click dismissal excludes the status-item button, so that button can close the open panel without immediately reopening it.
 

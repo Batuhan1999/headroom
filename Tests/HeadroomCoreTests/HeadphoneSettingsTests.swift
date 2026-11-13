@@ -4,6 +4,31 @@ import XCTest
 final class HeadphoneSettingsTests: XCTestCase {
     private func reply(_ bytes: [UInt8]) -> SonyReply? { SonyReply.parse(SonyFrame(payload: bytes)) }
 
+    func testOverEarModelProfilesShareProtocolWithoutMatchingEarbuds() {
+        XCTAssertEqual(SonyModel.identify("Sony WH-1000XM5"), .xm5)
+        XCTAssertEqual(SonyModel.identify("wh-1000xm6"), .xm6)
+        XCTAssertEqual(SonyModel.xm5.eqLayout, 0)
+        XCTAssertEqual(SonyModel.xm6.eqLayout, 4)
+        XCTAssertNil(SonyModel.identify("WF-1000XM6"))
+        XCTAssertNil(SonyModel.identify("WH-1000XM4"))
+    }
+
+    func testXM6TenBandProtocolAndRoundTrip() {
+        // Sony Device Center layout, also covered by Sound Connect's tests.
+        XCTAssertEqual(SonyRequest.equalizer(layout: 4).payload, [0x56, 4])
+        XCTAssertEqual(SonyRequest.setPreset(.bright, layout: 4).payload, [0x58, 4, 0x10, 0])
+        let eq = Equalizer(preset: 0x10, layout: 4)
+        XCTAssertEqual(eq.values, Array(repeating: 6, count: 10))
+        XCTAssertEqual(reply([0x57, 4, 0x10, 10] + Array(repeating: 6, count: 10)), .setting(.equalizer(eq)))
+        let custom = Equalizer(layout: 4, values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 20])
+        var notification = SonyRequest.setEqualizer(custom).payload
+        XCTAssertEqual(notification, [0x58, 4, 0xa0, 10, 0, 1, 2, 3, 4, 5, 6, 7, 8, 12])
+        notification[0] = 0x59
+        XCTAssertEqual(reply(notification), .setting(.equalizer(Equalizer(preset: 0xa0, layout: 4, values: custom.values))))
+        XCTAssertNil(reply([0x57, 4, 0x10, 10, 6]))
+        XCTAssertNil(reply([0x57, 4, 0x10, 10] + Array(repeating: 13, count: 10)))
+    }
+
     func testCapturedWHXM5Settings() {
         // WH-1000XM5 replies published by Sound Connect, firmware 2.4.1.
         XCTAssertEqual(reply([0x13, 2, 2]), .setting(.codec("AAC")))
@@ -95,34 +120,25 @@ final class HeadphoneSettingsTests: XCTestCase {
         XCTAssertNil(lowAtLaunch.update(4))
     }
 
-    func testNewMacAudioInterruptsOnceAndMustBeRearmedBySilence() {
+    func testNewMacAudioHasNoDebounceAndDoesNotBounceContinuousPlayback() {
         var detector = MacAudioStartDetector()
         XCTAssertFalse(detector.observe(silence: false, now: 0))
+        XCTAssertFalse(detector.observe(silence: true, now: 0.1))
+        XCTAssertTrue(detector.observe(silence: false, now: 0.2))
+        XCTAssertFalse(detector.observe(silence: false, now: 0.3))
+        // The phone can take over a continuous Mac stream without a bounce back.
         XCTAssertFalse(detector.observe(silence: false, now: 1))
-        XCTAssertFalse(detector.observe(silence: true, now: 2))
-        XCTAssertFalse(detector.observe(silence: true, now: 3))
-        XCTAssertFalse(detector.observe(silence: true, now: 4))
-        XCTAssertFalse(detector.observe(silence: false, now: 5))
-        XCTAssertTrue(detector.observe(silence: false, now: 6))
-        // The phone can take over while Mac audio continues, without a bounce back.
-        XCTAssertFalse(detector.observe(silence: false, now: 7))
-        XCTAssertFalse(detector.observe(silence: false, now: 8))
-        XCTAssertFalse(detector.observe(silence: true, now: 9))
-        XCTAssertFalse(detector.observe(silence: true, now: 11))
-        XCTAssertFalse(detector.observe(silence: false, now: 12))
-        XCTAssertTrue(detector.observe(silence: false, now: 13))
+        XCTAssertFalse(detector.observe(silence: true, now: 1.1))
+        XCTAssertTrue(detector.observe(silence: false, now: 1.2))
     }
 
     func testUnknownMeterAndSleepDoNotInventANewAudioStart() {
         var detector = MacAudioStartDetector()
         _ = detector.observe(silence: true, now: 0)
-        _ = detector.observe(silence: true, now: 2)
-        XCTAssertFalse(detector.observe(silence: nil, now: 3))
-        XCTAssertFalse(detector.observe(silence: false, now: 4))
-        _ = detector.observe(silence: true, now: 5)
-        _ = detector.observe(silence: true, now: 7)
+        XCTAssertFalse(detector.observe(silence: nil, now: 0.1))
+        XCTAssertFalse(detector.observe(silence: false, now: 0.2))
+        _ = detector.observe(silence: true, now: 1)
         XCTAssertFalse(detector.observe(silence: false, now: 30))
-        XCTAssertFalse(detector.observe(silence: false, now: 31))
     }
 
     func testCallsRestorePreviousNoiseStateAndHonorManualChange() {

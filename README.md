@@ -1,4 +1,5 @@
 <div align="center">
+  <img src="docs/images/headroom.svg" width="76" height="76" alt="Headroom logo">
   <h1>Headroom</h1>
   <p><b>Your Sony headphones, one click away. Noise control, equalizer and better Mac + iPhone handoffs in a tiny native menu bar app.</b></p>
   <a href="https://github.com/Batuhan1999/headroom/releases/latest"><img alt="Latest version" src="https://img.shields.io/github/v/release/Batuhan1999/headroom?style=flat-square"></a>
@@ -8,15 +9,15 @@
 </div>
 
 <p align="center">
-  <img src="docs/images/menu.png" width="300" alt="Headroom menu with audio sources, noise control, equalizer and idle power-off">
+  <img src="docs/images/cover.png" width="1000" alt="Headroom: native Mac headphone controls, with its compact menu and inline vertical equalizer">
 </p>
 
-Headroom is for **Sony WH-1000XM5 over-ear headphones on a Mac**, especially when you also use an iPhone. It talks directly to the headphones over Bluetooth. No account, server, Electron or third-party runtime.
+Headroom is for **Sony WH-1000XM5 and WH-1000XM6 over-ear headphones on a Mac**, especially when you also use an iPhone. It talks directly to the headphones over Bluetooth. No account, server, Electron or third-party runtime.
 
 ## Features
 
 - **Noise control** — Noise Cancelling, Ambient Sound and Off, ambient level and Focus on Voice.
-- **Shape your sound** — Sony EQ presets, five bands and Clear Bass, plus DSEE Extreme. The EQ lives inside the dropdown.
+- **Shape your sound** — Sony EQ presets, XM5 five-band EQ and Clear Bass, XM6 ten-band EQ, plus DSEE Extreme. The EQ lives inside the dropdown.
 - **Mac + iPhone** — choose the audio source, release a silent Mac stream so the phone can play, and keep the Mac fully disconnected with Phone Only.
 - **Backpack protection** — release the Mac connection when it locks, sleeps or closes its lid. Reconnect after wake with bounded retries.
 - **Silence power-off** — a configurable timer checks headphone playback, Mac output levels and call activity. Keep Headphones On pauses it for quiet ANC use.
@@ -28,17 +29,26 @@ Headroom is for **Sony WH-1000XM5 over-ear headphones on a Mac**, especially whe
 
 ## Quick start
 
-1. Download **Headroom-macOS-arm64.zip** from [Releases](https://github.com/Batuhan1999/headroom/releases/latest), unzip it and move **Headroom.app** to Applications. The prebuilt beta is for Apple Silicon; Intel Macs can build from source.
-2. Pair and connect the WH-1000XM5 in macOS Bluetooth settings. Allow Headroom to use Bluetooth.
-3. Open Headroom and click its headphones icon. Turn on **Open at login** in the **…** menu if wanted.
-4. For silence detection and silent-stream handoffs, enable **Measure headphone audio levels** in Settings and allow macOS **System Audio Recording** access. The access check plays a short quiet tone.
-5. Before enabling multipoint auto-off, use **Check iPhone playback**: play on the phone, then pause. This verifies the headset's remote playback reports for your phone and firmware.
+Install from Terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Batuhan1999/headroom/main/install.sh | bash
+```
+
+The installer downloads the latest Apple Silicon release, checks its SHA-256 and bundle signature, and installs it in Applications (or your personal Applications folder when needed). It does not ask for `sudo`. To update, run the same command again.
+
+Prefer a manual install? Download **Headroom-macOS-arm64.zip** from [Releases](https://github.com/Batuhan1999/headroom/releases/latest), unzip it and move **Headroom.app** to Applications. Intel Macs can build from source.
+
+1. Pair and connect your headphones in macOS Bluetooth settings. Allow Headroom to use Bluetooth.
+2. Open Headroom and click its headphones icon. Turn on **Open at login** in the **…** menu if wanted.
+3. For silence detection and silent-stream handoffs, enable **Measure headphone audio levels** in Settings and allow macOS **System Audio Recording** access. The access check plays a short quiet tone.
+4. Before enabling multipoint auto-off, use **Check iPhone playback**: play on the phone, then pause. This verifies the headset's remote playback reports for your phone and firmware.
 
 The beta download is ad-hoc signed, **not notarized**. macOS may require you to approve it in Privacy & Security. If you prefer, build it locally using Xcode's command-line tools.
 
 ## How switching works
 
-After the Mac stays silent, Headroom releases its output while keeping the Bluetooth control channel open. Fresh Mac audio can interrupt phone playback and select the Mac again. It requires two seconds of preceding Mac silence and one second of sustained audio; a continuous Mac stream does not repeatedly steal playback back. Phone playback can take over again through Sony multipoint. A source button is an explicit handoff: it can pause the previous source, requests the selected device, and reports a rejection instead of claiming success. Calls block source switching.
+After the Mac stays silent, Headroom releases its output while keeping the Bluetooth control channel open. Fresh Mac audio can interrupt phone playback and select the Mac again. There is no debounce: the first audible Mac reading after silence requests a handoff (levels are checked every 100 ms). A continuous Mac stream does not repeatedly steal playback back. Phone playback can take over again through Sony multipoint. A source button is an explicit handoff: it can pause the previous source, requests the selected device, and reports a rejection instead of claiming success. Calls block source switching.
 
 **Phone Only** disconnects the Mac completely. **Keep Headphones On** pauses Headroom's timer; it does not change Sony's separate built-in wearing timer.
 
@@ -77,6 +87,15 @@ The default build is ad-hoc signed. For a consistent local signing identity, set
 
 See [Development](docs/DEVELOPMENT.md) for the architecture, validation and scope.
 
+## Supported headphones
+
+| Model | Equalizer | Validation |
+| --- | --- | --- |
+| WH-1000XM5 | Five bands + Clear Bass | Live-tested during development |
+| WH-1000XM6 | Ten bands (raw device steps 0–12) | Experimental; protocol-tested, not tried on hardware |
+
+Both models share the Sony v2 driver. XM6 support adds no dependency or bundled runtime. Controls appear only after the headset reports them; multipoint auto-off still requires a playing/paused check for your own headset and phone. XM6 EQ step values are not labeled as dB because that mapping has not been verified.
+
 ## Something not working?
 
 - **Phone audio will not start.** Select the phone in Headroom. Enable and verify audio-level detection; some silent Mac streams hold Sony's playback priority. Use Phone Only to release the Mac completely.
@@ -100,6 +119,6 @@ Turn off **Open at login** in the **…** menu, quit Headroom and move it from A
 
 Inspired by [Sound Connect](https://github.com/aecca/sound-connect), whose MIT-licensed Sony commands and native menu approach informed this app. Playback and source-switch details also build on [SonyHeadphonesClient](https://github.com/mos9527/SonyHeadphonesClient). Original licenses are preserved in [ThirdParty](ThirdParty).
 
-Headroom focuses on the WH-1000XM5 and Mac + iPhone behavior. Sound Connect supports more headphone models and Linux. Headroom does not include firmware updates, Linux support or an iPhone app.
+Headroom focuses on the over-ear XM5/XM6 and Mac + iPhone behavior. Sound Connect supports more headphone models and Linux. Headroom does not include firmware updates, Linux support or an iPhone app.
 
 Free and open source under the [MIT License](LICENSE). Independent software, not affiliated with or endorsed by Sony. Product names are trademarks of their owners.

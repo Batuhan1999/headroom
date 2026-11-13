@@ -1,5 +1,6 @@
 import CoreAudio
 import Foundation
+import HeadroomCore
 
 struct MacAudioSnapshot {
     var active: Bool?
@@ -31,7 +32,7 @@ enum MacAudio {
         }
         func compact(_ value: String) -> String { value.lowercased().filter { $0.isHexDigit } }
         let candidates = devices.compactMap { id -> String? in
-            guard string(id, kAudioObjectPropertyName)?.uppercased().contains("WH-1000XM5") == true,
+            guard SonyModel.identify(string(id, kAudioObjectPropertyName) ?? "") != nil,
                   let uid = string(id, kAudioDevicePropertyDeviceUID) else { return nil }
             var p = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams,
                 mScope: kAudioDevicePropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)

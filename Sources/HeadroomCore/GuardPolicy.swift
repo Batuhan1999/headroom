@@ -45,7 +45,7 @@ public struct IdlePolicy {
         let reason: String?
         if !input.enabled { reason = "Idle power-off is off" }
         else if input.keepANC { reason = "Keeping noise cancellation available" }
-        else if !input.connected { reason = "Connect your XM5s to monitor inactivity" }
+        else if !input.connected { reason = "Connect your headphones to monitor inactivity" }
         else if input.statusAge > 12 || input.peersAge > 12 { reason = "Waiting for fresh headphone status" }
         else if !input.onlyLocalMac && !input.remoteVerified { reason = "Check iPhone playback detection to enable multipoint auto-off" }
         else if input.playback == .unknown { reason = "Playback status is unknown" }

@@ -3,7 +3,6 @@ import HeadroomCore
 
 struct HeadphoneControls: View {
     @Bindable var model: HeadphoneController
-    @State private var showEQ = false
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             if let noise = model.noiseControl {
@@ -27,21 +26,23 @@ struct HeadphoneControls: View {
                     Spacer()
                     Picker("Equalizer preset", selection: Binding(get: { eq.preset }, set: { value in
                         guard let preset = EQPreset(rawValue: value) else { return }
-                        model.change(.setPreset(preset), verify: .equalizer)
+                        model.change(.setPreset(preset, layout: eq.layout), verify: .equalizer(layout: eq.layout))
                     })) {
                         if EQPreset(rawValue: eq.preset) == nil { Text(eq.title).tag(eq.preset) }
                         ForEach(EQPreset.allCases) { Text($0.title).tag($0.rawValue) }
                     }.labelsHidden().frame(maxWidth: 160)
                 }
-                DisclosureGroup("Adjust equalizer", isExpanded: $showEQ) {
-                    EqualizerEditor(model: model, equalizer: eq).padding(.top, 8)
-                }
+                EqualizerEditor(model: model, equalizer: eq)
             }
             if let dsee = model.dsee {
-                Toggle("DSEE Extreme", isOn: Binding(get: { dsee }, set: { model.change(.setDSEE($0), verify: .dsee) }))
+                MenuChoice(symbol: "waveform", title: "DSEE Extreme", selected: dsee) {
+                    model.change(.setDSEE(!dsee), verify: .dsee)
+                }
             }
             if let chat = model.speakToChat {
-                Toggle("Speak-to-Chat", isOn: Binding(get: { chat }, set: { model.change(.setSpeakToChat($0), verify: .speakToChat) }))
+                MenuChoice(symbol: "bubble.left.and.bubble.right", title: "Speak-to-Chat", selected: chat) {
+                    model.change(.setSpeakToChat(!chat), verify: .speakToChat)
+                }
             }
         }.font(.system(size: 12)).toggleStyle(.switch).controlSize(.small)
             .disabled(!model.linked || model.policy.blocked)
@@ -51,28 +52,90 @@ struct HeadphoneControls: View {
 private struct EqualizerEditor: View {
     var model: HeadphoneController
     let equalizer: Equalizer
-    @State private var values = Array(repeating: 0.0, count: 6)
+    @State private var values: [Double]
+    init(model: HeadphoneController, equalizer: Equalizer) {
+        self.model = model; self.equalizer = equalizer
+        _values = State(initialValue: equalizer.values.map(Double.init))
+    }
     @State private var editing = false
-    private let labels = ["Bass", "400", "1k", "2.5k", "6.3k", "16k"]
+    private var labels: [String] {
+        equalizer.isTenBand ? ["31", "63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
+            : ["Bass", "400", "1k", "2.5k", "6.3k", "16k"]
+    }
+    private var order: [Int] { equalizer.isTenBand ? Array(values.indices) : [1, 2, 3, 4, 5, 0] }
+    private func commit() {
+        editing = false
+        model.change(.setEqualizer(Equalizer(layout: equalizer.layout, values: values.map(Int.init))),
+                     verify: .equalizer(layout: equalizer.layout))
+    }
     var body: some View {
-        VStack(spacing: 6) {
-            ForEach(0..<6, id: \.self) { i in
-                HStack(spacing: 8) {
-                    Text(labels[i]).foregroundStyle(.secondary).frame(width: 32, alignment: .leading)
-                    Slider(value: $values[i], in: -10...10, step: 1, onEditingChanged: { isEditing in
-                        editing = isEditing
-                        if !isEditing { model.change(.setEqualizer(Equalizer(values: values.map(Int.init))), verify: .equalizer) }
-                    }).accessibilityLabel(i == 0 ? "Clear Bass" : "\(labels[i]) Hz")
-                    Text(String(format: "%+d", Int(values[i]))).monospacedDigit().frame(width: 25, alignment: .trailing)
+        VStack(spacing: 7) {
+            HStack(alignment: .top, spacing: equalizer.isTenBand ? 3 : 7) {
+                ForEach(order, id: \.self) { i in
+                    if !equalizer.isTenBand, i == 0 { Divider().frame(height: 139).padding(.horizontal, 2) }
+                    VStack(spacing: 5) {
+                        Text(equalizer.isTenBand ? "\(Int(values[i]))" : String(format: "%+d", Int(values[i])))
+                            .font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
+                        VerticalEQSlider(value: $values[i], range: equalizer.isTenBand ? 0...12 : -10...10,
+                                         label: !equalizer.isTenBand && i == 0 ? "Clear Bass" : "\(labels[i]) Hz",
+                                         onBegin: { editing = true }, onCommit: commit)
+                            .frame(width: 18, height: 112)
+                        Text(!equalizer.isTenBand && i == 0 ? "Bass" : labels[i])
+                            .font(.system(size: equalizer.isTenBand ? 8 : 9)).foregroundStyle(.secondary)
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                    }.frame(maxWidth: .infinity)
                 }
             }
             HStack {
-                Text("Clear Bass + five bands · −10 to +10").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(equalizer.isTenBand ? "Raw steps · 0–12" : "Clear Bass + five bands")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
                 Spacer()
-                Button("Reset") { model.change(.setEqualizer(Equalizer()), verify: .equalizer) }
-            }.padding(.top, 4)
-        }.onAppear { values = equalizer.values.map(Double.init) }
+                Button("Reset") { model.change(.setEqualizer(Equalizer(layout: equalizer.layout)), verify: .equalizer(layout: equalizer.layout)) }
+                    .font(.system(size: 10)).buttonStyle(.plain).foregroundStyle(.secondary)
+            }
+        }.padding(.vertical, 3)
             .onChange(of: equalizer) { _, eq in if !editing { values = eq.values.map(Double.init) } }
+    }
+}
+
+private struct VerticalEQSlider: NSViewRepresentable {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let label: String
+    let onBegin: () -> Void
+    let onCommit: () -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeNSView(context: Context) -> EQSlider {
+        let slider = EQSlider(value: value, minValue: range.lowerBound, maxValue: range.upperBound,
+                              target: context.coordinator, action: #selector(Coordinator.changed(_:)))
+        slider.isVertical = true; slider.isContinuous = true; slider.controlSize = .small
+        slider.setAccessibilityLabel(label)
+        slider.onBegin = onBegin; slider.onCommit = onCommit
+        return slider
+    }
+    func updateNSView(_ slider: EQSlider, context: Context) {
+        context.coordinator.parent = self
+        slider.minValue = range.lowerBound; slider.maxValue = range.upperBound
+        if !slider.dragging { slider.doubleValue = value }
+        slider.onBegin = onBegin; slider.onCommit = onCommit
+    }
+    final class Coordinator: NSObject {
+        var parent: VerticalEQSlider
+        init(_ parent: VerticalEQSlider) { self.parent = parent }
+        @objc func changed(_ slider: EQSlider) {
+            parent.value = slider.doubleValue.rounded()
+            if !slider.dragging { parent.onCommit() }
+        }
+    }
+    final class EQSlider: NSSlider {
+        var dragging = false
+        var onBegin: (() -> Void)?
+        var onCommit: (() -> Void)?
+        override func mouseDown(with event: NSEvent) {
+            dragging = true; onBegin?()
+            super.mouseDown(with: event)
+            dragging = false; onCommit?()
+        }
     }
 }
 

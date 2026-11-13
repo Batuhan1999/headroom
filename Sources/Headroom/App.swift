@@ -10,6 +10,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var item: NSStatusItem!
     private var monitors: [Any] = []
     private var extras: AppExtras!
+    private var statusMonitor: Any?
+    private var capturedButton: Int?
+    private var lastStatusClick: TimeInterval = -.infinity
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let arguments = ProcessInfo.processInfo.arguments
@@ -34,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.action = #selector(toggle)
         item.button?.sendAction(on: [.leftMouseDown, .rightMouseDown])
         item.button?.toolTip = "Headroom · click for controls"
+        installStatusClickHandler()
         observeIcon()
         if arguments.contains("--show") || arguments.contains("--demo") { show() }
     }
@@ -74,18 +78,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         extras.menuIsOpen = true
         item.button?.highlight(true)
         monitors = [
-            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
                 guard let self, !self.pointerIsInsideMenu else { return }
-                self.close()
+                let timestamp = event.timestamp
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
+                    guard let self, abs(self.lastStatusClick - timestamp) > 0.1 else { return }
+                    self.close()
+                }
             },
-            NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
+            NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
                 guard let self else { return event }
                 if event.type == .keyDown, event.keyCode == 53 { self.close(); return nil }
-                if event.type != .keyDown, event.window !== self.panel,
-                   event.window !== self.item.button?.window, !self.pointerIsInsideMenu { self.close() }
                 return event
             }
         ].compactMap { $0 }
+    }
+
+    private func installStatusClickHandler() {
+        // Consume both halves of our click before AppKit's tracking loop clears the highlight.
+        statusMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .leftMouseUp, .rightMouseUp]) { [weak self] event in
+            guard let self else { return event }
+            let down = event.type == .leftMouseDown || event.type == .rightMouseDown
+            if down {
+                self.capturedButton = nil
+                guard !event.modifierFlags.contains(.command), let button = self.item.button,
+                      event.window === button.window,
+                      button.bounds.contains(button.convert(event.locationInWindow, from: nil)) else { return event }
+                self.capturedButton = event.buttonNumber
+                self.lastStatusClick = event.timestamp
+                self.toggle()
+                return nil
+            }
+            if self.capturedButton == event.buttonNumber {
+                self.capturedButton = nil
+                return nil
+            }
+            return event
+        }
     }
 
     private var pointerIsInsideMenu: Bool {
@@ -115,7 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func confirmPowerOff() {
         close(); NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Power off your XM5s?"
+        alert.messageText = "Power off your \(model.modelName)?"
         alert.informativeText = "Audio and calls will stop on every connected device. Turn them on again using their power button."
         alert.addButton(withTitle: "Power Off"); alert.addButton(withTitle: "Cancel")
         if alert.runModal() == .alertFirstButtonReturn { model.powerOff() }
@@ -174,8 +203,8 @@ struct DropdownView: View {
             HStack(spacing: 11) {
                 Image(systemName: "headphones").font(.system(size: 20, weight: .light)).foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("WH-1000XM5").font(.system(size: 13, weight: .semibold))
-                    Text(model.demo ? "Preview" : model.phoneOnly ? "Phone only" : model.linked ? "Connected to Mac" : "Not connected to Mac")
+                    Text(model.modelName).font(.system(size: 13, weight: .semibold))
+                    Text(model.demo ? "Preview" : model.sourceStatus?.hasPrefix("Switching") == true ? "Switching audio…" : model.phoneOnly ? "Phone only" : model.linked ? "Connected" : "Disconnected")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -237,9 +266,6 @@ struct DropdownView: View {
                     }
                 }
             }
-            if let source = model.sourceStatus, source.hasPrefix("Switch") || source.hasPrefix("Source") {
-                Text(source).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-            }
             if let noise = model.noiseControl {
                 Divider()
                 VStack(spacing: 0) {
@@ -249,15 +275,8 @@ struct DropdownView: View {
                 }.disabled(!model.linked || model.policy.blocked)
             }
             if model.equalizer != nil || model.dsee != nil || model.speakToChat != nil {
-                DisclosureGroup(isExpanded: $soundExpanded) {
-                    HeadphoneControls(model: model).padding(.top, 10)
-                } label: {
-                    HStack {
-                        Text("Sound")
-                        Spacer()
-                        Text(model.equalizer?.title ?? "").foregroundStyle(.secondary).font(.system(size: 11))
-                    }
-                }.font(.system(size: 12))
+                FoldHeader(title: "Sound", detail: model.equalizer?.title, expanded: $soundExpanded)
+                if soundExpanded { HeadphoneControls(model: model) }
             }
             Divider()
             Toggle("Phone only", isOn: $model.phoneOnly).toggleStyle(.switch).controlSize(.mini)
@@ -344,7 +363,7 @@ struct DropdownView: View {
 }
 
 
-private struct MenuChoice: View {
+struct MenuChoice: View {
     let symbol: String
     let title: String
     let selected: Bool
@@ -361,5 +380,23 @@ private struct MenuChoice: View {
                 if selected { Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary) }
             }.frame(height: 29).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+
+struct FoldHeader: View {
+    let title: String
+    var detail: String? = nil
+    @Binding var expanded: Bool
+    var body: some View {
+        Button { expanded.toggle() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 10, weight: .semibold)).frame(width: 10)
+                Text(title)
+                Spacer()
+                if let detail { Text(detail).font(.system(size: 11)).foregroundStyle(.secondary) }
+            }.frame(maxWidth: .infinity, minHeight: 27).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityLabel(title).accessibilityValue(expanded ? "Expanded" : "Collapsed")
     }
 }

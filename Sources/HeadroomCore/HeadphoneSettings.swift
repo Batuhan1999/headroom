@@ -1,5 +1,13 @@
 import Foundation
 
+public enum SonyModel: String, CaseIterable {
+    case xm5 = "WH-1000XM5", xm6 = "WH-1000XM6"
+    public var eqLayout: UInt8 { self == .xm6 ? 4 : 0 }
+    public static func identify(_ name: String) -> Self? {
+        allCases.first { name.uppercased().contains($0.rawValue) }
+    }
+}
+
 // Sony v2 layouts adapted from Sound Connect (MIT). See ThirdParty/.
 public enum ListeningMode: String, CaseIterable, Identifiable {
     case noiseCancelling, ambient, off
@@ -37,10 +45,16 @@ public enum EQPreset: UInt8, CaseIterable, Identifiable {
 
 public struct Equalizer: Equatable {
     public var preset: UInt8
-    // Clear Bass, 400 Hz, 1 kHz, 2.5 kHz, 6.3 kHz, 16 kHz; -10...10.
+    public var layout: UInt8
+    // XM5: Clear Bass + five bands, -10...10. XM6: ten raw steps, 0...12.
     public var values: [Int]
-    public init(preset: UInt8 = 0, values: [Int] = Array(repeating: 0, count: 6)) {
-        self.preset = preset; self.values = Array((values + Array(repeating: 0, count: 6)).prefix(6)).map { min(10, max(-10, $0)) }
+    public var isTenBand: Bool { layout == 4 }
+    public init(preset: UInt8 = 0, layout: UInt8 = 0, values: [Int]? = nil) {
+        self.preset = preset; self.layout = layout == 4 ? 4 : 0
+        let count = layout == 4 ? 10 : 6, neutral = layout == 4 ? 6 : 0
+        let range = layout == 4 ? 0...12 : -10...10
+        self.values = Array(((values ?? []) + Array(repeating: neutral, count: count)).prefix(count))
+            .map { min(range.upperBound, max(range.lowerBound, $0)) }
     }
     public var title: String { EQPreset(rawValue: preset)?.title ?? "Preset \(preset)" }
 }
@@ -67,6 +81,9 @@ public enum HeadphoneSetting: Equatable {
         case (0x57, 0), (0x59, 0):
             guard p.count == 10, p[3] == 6, p[4...].allSatisfy({ $0 <= 20 }) else { return nil }
             return .equalizer(Equalizer(preset: p[2], values: p[4...].map { Int($0) - 10 }))
+        case (0x57, 4), (0x59, 4):
+            guard p.count == 14, p[3] == 10, p[4...].allSatisfy({ $0 <= 12 }) else { return nil }
+            return .equalizer(Equalizer(preset: p[2], layout: 4, values: p[4...].map(Int.init)))
         case (0xe7, 1), (0xe9, 1): return p[2] <= 1 ? .dsee(p[2] == 1) : nil
         case (0xf7, 0x0c), (0xf9, 0x0c): return p[2] <= 1 ? .speakToChat(p[2] == 0) : nil
         case (0xf7, 1), (0xf9, 1): return p.count == 3 && p[2] <= 1 ? .wearingPause(p[2] == 0) : nil
@@ -83,6 +100,7 @@ public extension SonyRequest {
     static let codec = Self(payload: [0x12, 2])
     static let noise = Self(payload: [0x66, 0x17])
     static let equalizer = Self(payload: [0x56, 0])
+    static func equalizer(layout: UInt8) -> Self { Self(payload: [0x56, layout == 4 ? 4 : 0]) }
     static let dsee = Self(payload: [0xe6, 1])
     static let speakToChat = Self(payload: [0xf6, 0x0c])
     static let chatOptions = Self(payload: [0xfa, 0x0c])
@@ -94,9 +112,12 @@ public extension SonyRequest {
         Self(payload: [0x68, 0x17, 1, state.mode == .off ? 0 : 1, state.mode == .ambient ? 1 : 0,
                        state.focusOnVoice ? 1 : 0, UInt8(min(20, max(1, state.ambientLevel)))], isMutation: true)
     }
-    static func setPreset(_ preset: EQPreset) -> Self { Self(payload: [0x58, 0, preset.rawValue, 0], isMutation: true) }
+    static func setPreset(_ preset: EQPreset, layout: UInt8 = 0) -> Self { Self(payload: [0x58, layout == 4 ? 4 : 0, preset.rawValue, 0], isMutation: true) }
     static func setEqualizer(_ state: Equalizer) -> Self {
-        Self(payload: [0x58, 0, EQPreset.manual.rawValue, 6] + state.values.map { UInt8(min(10, max(-10, $0)) + 10) }, isMutation: true)
+        if state.isTenBand {
+            return Self(payload: [0x58, 4, EQPreset.manual.rawValue, 10] + state.values.prefix(10).map { UInt8(min(12, max(0, $0))) }, isMutation: true)
+        }
+        return Self(payload: [0x58, 0, EQPreset.manual.rawValue, 6] + state.values.prefix(6).map { UInt8(min(10, max(-10, $0)) + 10) }, isMutation: true)
     }
     static func setDSEE(_ on: Bool) -> Self { Self(payload: [0xe8, 1, on ? 1 : 0], isMutation: true) }
     static func setSpeakToChat(_ on: Bool) -> Self { Self(payload: [0xf8, 0x0c, on ? 0 : 1, 1], isMutation: true) }
@@ -165,30 +186,12 @@ public struct CallAmbience {
 }
 
 public struct MacAudioStartDetector {
-    private var quietSince: TimeInterval?
-    private var audibleSince: TimeInterval?
-    private var armed = false
+    private var wasSilent: Bool?
     private var lastCheck: TimeInterval?
     public init() {}
     public mutating func observe(silence: Bool?, now: TimeInterval) -> Bool {
-        defer { lastCheck = now }
-        if let lastCheck, now < lastCheck || now - lastCheck > 4 {
-            quietSince = nil; audibleSince = nil; armed = false
-        }
-        guard let silence else { quietSince = nil; audibleSince = nil; armed = false; return false }
-        if silence {
-            audibleSince = nil
-            if quietSince == nil { quietSince = now }
-            if now - quietSince! >= 2 { armed = true }
-        } else {
-            quietSince = nil
-            guard armed else { return false }
-            if audibleSince == nil { audibleSince = now }
-            if now - audibleSince! >= 1 {
-                armed = false; audibleSince = nil
-                return true
-            }
-        }
-        return false
+        defer { wasSilent = silence; lastCheck = now }
+        guard let silence, let lastCheck, now >= lastCheck, now - lastCheck <= 4 else { return false }
+        return wasSilent == true && !silence
     }
 }
