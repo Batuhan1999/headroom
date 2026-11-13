@@ -49,7 +49,7 @@ struct HeadroomApplication: App {
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: "beats.headphones")
-                if model.showBattery, let battery = model.battery {
+                if model.showBattery, model.linked, model.connected, !model.needsPowerOn, let battery = model.battery {
                     Text("\(battery)%").monospacedDigit()
                 }
             }.accessibilityLabel("Headroom").help("Headroom")
@@ -129,7 +129,7 @@ struct DropdownView: View {
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if let battery = model.battery {
+                if model.linked, model.connected, !model.needsPowerOn, let battery = model.battery {
                     Label("\(battery)%", systemImage: battery > 30 ? "battery.75percent" : "battery.25percent")
                         .font(.system(size: 12, weight: .medium)).monospacedDigit()
                         .help(model.linked ? "Headphone battery" : "Last known headphone battery")

@@ -286,7 +286,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
     func refresh() {
         guard !demo, !stopping else { return }
         guard bluetoothReady else {
-            connected = false; status = "Waiting for Bluetooth"; return
+            connected = false; battery = nil; status = "Waiting for Bluetooth"; return
         }
         if now >= pairedRefreshAt {
             pairedRefreshAt = now + 15
@@ -296,6 +296,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
             if selectedID.isEmpty, choices.count == 1 { selectedID = choices[0].id }
         }
         connected = selectedDevice?.isConnected() == true
+        if !connected { battery = nil }
         if shutdownPending {
             if !connected {
                 disconnectedAfterPowerOff = true
@@ -606,7 +607,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
     }
 
     private func stopLink() {
-        let old = channel; channel = nil; linked = false; openDeadline = nil
+        let old = channel; channel = nil; linked = false; openDeadline = nil; battery = nil
         session = SonySession(); listWithClass = nil; playback = .unknown
         lastPlayback = nil; lastPeers = nil; peers = []; peerSnapshot = nil; idle.reset()
         stopMeter(); headphoneOutputUID = nil; audioSnapshotAt = 0; recordingActivity = nil; pendingAutoOffAt = nil; localSilentSince = nil; sourceHandoff.cancel(); sourceStatus = nil; sourceAfterPause = nil; lastSourceRequestAccepted = false
@@ -624,7 +625,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
         lastAction = "Sent power-off request; waiting for disconnection"
         note(lastAction)
         requestSony(.powerOff)
-        disconnectedAfterPowerOff = false; shutdownPending = true; shutdownAt = now
+        disconnectedAfterPowerOff = false; shutdownPending = true; shutdownAt = now; battery = nil
         saveSnapshot(force: true)
     }
 
@@ -888,7 +889,7 @@ final class HeadphoneController: NSObject, IOBluetoothRFCOMMChannelDelegate, CBC
 
     private func writeDiagnostics(_ url: URL) {
         let data: [String: Any] = [
-            "app": "Headroom 0.3.1", "date": ISO8601DateFormatter().string(from: Date()),
+            "app": "Headroom 0.3.2", "date": ISO8601DateFormatter().string(from: Date()),
             "status": status, "bluetooth": bluetoothStatus, "pairedHeadphoneCount": choices.count,
             "connectedToMac": connected, "controlChannelOpen": linked,
             "model": modelName, "battery": battery as Any? ?? NSNull(), "firmware": firmware as Any? ?? NSNull(),

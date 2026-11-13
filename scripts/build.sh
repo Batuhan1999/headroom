@@ -18,8 +18,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Headroom</string>
 <key>CFBundleExecutable</key><string>Headroom</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.3.1</string>
-<key>CFBundleVersion</key><string>4</string>
+<key>CFBundleShortVersionString</key><string>0.3.2</string>
+<key>CFBundleVersion</key><string>5</string>
 <key>LSMinimumSystemVersion</key><string>14.2</string>
 <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>Headroom modes</string><key>CFBundleURLSchemes</key><array><string>headroom</string></array></dict></array>
 <key>LSUIElement</key><true/>

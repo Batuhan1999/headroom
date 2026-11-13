@@ -44,6 +44,10 @@ The app has no updater and never replaces itself from the upstream Sound Connect
 Preserve the notices in `ThirdParty` when redistributing adapted code.
 
 
+Battery readings belong to the active connection: shutdown, channel loss and Bluetooth disconnection clear them. The menu and menu-bar label also require an active connection before showing a percentage.
+
+The README pins the installer script to a release tag; the script downloads the latest app release when rerun.
+
 ## Setup and troubleshooting
 
 Pair the headphones in Bluetooth Settings, open Headroom from Applications and use the headphones icon. Enable Open at Login in the More menu. For silence detection, allow System Audio Recording, then use the audio-level Check in Settings. The calibration plays a short quiet tone. Before multipoint auto-off, verify phone playback by playing on the iPhone, then pausing it.
