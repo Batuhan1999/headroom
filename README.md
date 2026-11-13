@@ -2,7 +2,7 @@
   <img src="docs/images/headroom.svg" width="72" height="72" alt="Headroom logo">
   <h1>Headroom</h1>
   <p><b>Noise control, EQ and smarter Mac ↔ iPhone switching. Right in your menu bar.</b></p>
-  <p><b>~0.33 MB download · Native macOS · No dependencies</b></p>
+  <p><b>337 KB download · Native macOS · No dependencies</b></p>
   <a href="https://github.com/Batuhan1999/headroom/releases/latest"><img alt="Latest version" src="https://img.shields.io/github/v/release/Batuhan1999/headroom?style=flat-square"></a>
   <img alt="macOS 14.2 or newer" src="https://img.shields.io/badge/macOS-14.2%2B-blue?style=flat-square">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-green?style=flat-square"></a>

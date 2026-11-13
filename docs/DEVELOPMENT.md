@@ -23,9 +23,10 @@ XM6 support reuses the same transport, battery, source and system-setting comman
 
 Core Audio process and device scans run on a utility queue, once per cycle. The UI consumes a timestamped snapshot; stale snapshots become unknown and cannot satisfy idle checks. RFCOMM writes are asynchronous and retain their buffers until completion or channel close. The paired-device list is cached between refreshes. Optional diagnostic serialization, login-status queries and file writes run off the main thread.
 
-Fresh Mac output is checked every 100 ms using the existing in-memory peak; there is no debounce or repeated hardware scan on that fast path. Continuous audio does not repeatedly trigger a handoff. The status icon consumes its own mouse-down/up pair before AppKit tracking starts, and explicitly highlights while the panel is open. This avoids the default tracking loop clearing the highlight or reopening the panel on a second click. Command-drag still passes through for menu-bar reordering.
+Fresh Mac output is checked every 100 ms using the existing in-memory peak; there is no debounce or repeated hardware scan on that fast path. Continuous audio does not repeatedly trigger a handoff.
 
-The 300-point native panel fits its content, with scrolling at screen height. Opening it and changing sections do not use animations. Outside-click dismissal excludes the status-item button, so that button can close the open panel without immediately reopening it.
+The menu uses SwiftUI `MenuBarExtra` with its native window style. macOS owns the icon highlight, click tracking, Escape and outside-click dismissal. There is no custom menu panel, event monitor or simulated press state. The content is 300 points wide and fits its controls, scrolling at screen height. EQ uses native vertical `NSSlider` controls; release commits a setting instead of sending every drag sample. Icon buttons use standard tooltips.
+
 
 A [GitHub Actions template](macos-ci.yml) runs tests and verifies an ad-hoc app build on macOS. To enable it, copy it to `.github/workflows/ci.yml` using a GitHub login with workflow-write permission. Automated CI is not enabled in this initial publication; the commands above were run locally.
 
@@ -41,3 +42,16 @@ The app has no updater and never replaces itself from the upstream Sound Connect
 - [SonyHeadphonesClient](https://github.com/mos9527/SonyHeadphonesClient/tree/3c8f3330c85d45c29e7b76f718082a8d4fe402f1): playback controller, call status, source-switch outcomes and connected-source layouts (MIT).
 
 Preserve the notices in `ThirdParty` when redistributing adapted code.
+
+
+## Setup and troubleshooting
+
+Pair the headphones in Bluetooth Settings, open Headroom from Applications and use the headphones icon. Enable Open at Login in the More menu. For silence detection, allow System Audio Recording, then use the audio-level Check in Settings. The calibration plays a short quiet tone. Before multipoint auto-off, verify phone playback by playing on the iPhone, then pausing it.
+
+If phone playback is blocked by a silent Mac stream, select the phone or use Phone Only. Avoid running another desktop Sony controller at the same time. Unknown playback, unverified phone reporting, active calls and microphone use pause the idle countdown. The silence timer cannot run while the Mac is asleep, off or fully disconnected. Keep Headphones On pauses this timer; Sony's built-in wearing timer is separate.
+
+Mode links work while Headroom is running and connected: `headroom://mode/next`, `headroom://mode/noise-cancelling`, `headroom://mode/ambient` and `headroom://mode/off`. Enable ⌃⌥⌘N in Settings for global cycling. No Accessibility permission is needed.
+
+The app makes no network requests and saves no recordings. The installer uses GitHub to download the release, verify its checksum and install it. Diagnostics are exported only when requested; they contain device state and timestamps, so review before sharing.
+
+To uninstall, disable Open at Login, quit the app and move it to Trash. Bluetooth and audio permissions can be removed in System Settings.

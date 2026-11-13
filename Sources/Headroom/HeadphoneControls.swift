@@ -57,14 +57,12 @@ private struct EqualizerEditor: View {
         self.model = model; self.equalizer = equalizer
         _values = State(initialValue: equalizer.values.map(Double.init))
     }
-    @State private var editing = false
     private var labels: [String] {
         equalizer.isTenBand ? ["31", "63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
             : ["Bass", "400", "1k", "2.5k", "6.3k", "16k"]
     }
     private var order: [Int] { equalizer.isTenBand ? Array(values.indices) : [1, 2, 3, 4, 5, 0] }
     private func commit() {
-        editing = false
         model.change(.setEqualizer(Equalizer(layout: equalizer.layout, values: values.map(Int.init))),
                      verify: .equalizer(layout: equalizer.layout))
     }
@@ -78,7 +76,7 @@ private struct EqualizerEditor: View {
                             .font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
                         VerticalEQSlider(value: $values[i], range: equalizer.isTenBand ? 0...12 : -10...10,
                                          label: !equalizer.isTenBand && i == 0 ? "Clear Bass" : "\(labels[i]) Hz",
-                                         onBegin: { editing = true }, onCommit: commit)
+                                         onCommit: commit)
                             .frame(width: 18, height: 112)
                         Text(!equalizer.isTenBand && i == 0 ? "Bass" : labels[i])
                             .font(.system(size: equalizer.isTenBand ? 8 : 9)).foregroundStyle(.secondary)
@@ -91,10 +89,10 @@ private struct EqualizerEditor: View {
                     .font(.system(size: 10)).foregroundStyle(.secondary)
                 Spacer()
                 Button("Reset") { model.change(.setEqualizer(Equalizer(layout: equalizer.layout)), verify: .equalizer(layout: equalizer.layout)) }
-                    .font(.system(size: 10)).buttonStyle(.plain).foregroundStyle(.secondary)
+                    .font(.system(size: 10)).buttonStyle(.plain).foregroundStyle(.secondary).help("Reset the equalizer to neutral")
             }
         }.padding(.vertical, 3)
-            .onChange(of: equalizer) { _, eq in if !editing { values = eq.values.map(Double.init) } }
+            .onChange(of: equalizer) { _, eq in values = eq.values.map(Double.init) }
     }
 }
 
@@ -102,39 +100,26 @@ private struct VerticalEQSlider: NSViewRepresentable {
     @Binding var value: Double
     let range: ClosedRange<Double>
     let label: String
-    let onBegin: () -> Void
     let onCommit: () -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
-    func makeNSView(context: Context) -> EQSlider {
-        let slider = EQSlider(value: value, minValue: range.lowerBound, maxValue: range.upperBound,
+    func makeNSView(context: Context) -> NSSlider {
+        let slider = NSSlider(value: value, minValue: range.lowerBound, maxValue: range.upperBound,
                               target: context.coordinator, action: #selector(Coordinator.changed(_:)))
-        slider.isVertical = true; slider.isContinuous = true; slider.controlSize = .small
-        slider.setAccessibilityLabel(label)
-        slider.onBegin = onBegin; slider.onCommit = onCommit
+        slider.isVertical = true; slider.isContinuous = false; slider.controlSize = .small
+        slider.setAccessibilityLabel(label); slider.toolTip = label
         return slider
     }
-    func updateNSView(_ slider: EQSlider, context: Context) {
+    func updateNSView(_ slider: NSSlider, context: Context) {
         context.coordinator.parent = self
         slider.minValue = range.lowerBound; slider.maxValue = range.upperBound
-        if !slider.dragging { slider.doubleValue = value }
-        slider.onBegin = onBegin; slider.onCommit = onCommit
+        slider.doubleValue = value
     }
     final class Coordinator: NSObject {
         var parent: VerticalEQSlider
         init(_ parent: VerticalEQSlider) { self.parent = parent }
-        @objc func changed(_ slider: EQSlider) {
+        @objc func changed(_ slider: NSSlider) {
             parent.value = slider.doubleValue.rounded()
-            if !slider.dragging { parent.onCommit() }
-        }
-    }
-    final class EQSlider: NSSlider {
-        var dragging = false
-        var onBegin: (() -> Void)?
-        var onCommit: (() -> Void)?
-        override func mouseDown(with event: NSEvent) {
-            dragging = true; onBegin?()
-            super.mouseDown(with: event)
-            dragging = false; onCommit?()
+            parent.onCommit()
         }
     }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 // Migrate this Mac's prototype preferences once; no device data ships in the app.
 if !UserDefaults.standard.bool(forKey: "MigratedPrototype") {
@@ -11,9 +12,5 @@ if !UserDefaults.standard.bool(forKey: "MigratedPrototype") {
     UserDefaults.standard.set(true, forKey: "MigratedPrototype")
 }
 
-// Keep AppKit's event loop outside a Swift concurrency main-actor job.
-let app = NSApplication.shared
-let delegate = MainActor.assumeIsolated { AppDelegate() }
-app.delegate = delegate
-app.setActivationPolicy(.accessory)
-withExtendedLifetime(delegate) { app.run() }
+// SwiftUI owns the native menu-extra lifecycle and AppKit event loop.
+HeadroomApplication.main()
