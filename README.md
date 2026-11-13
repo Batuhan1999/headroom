@@ -15,7 +15,7 @@
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Batuhan1999/headroom/main/install.sh | bash
+curl -fsSL --retry 3 https://raw.githubusercontent.com/Batuhan1999/headroom/main/install.sh | bash
 ```
 
 Or [download the app](https://github.com/Batuhan1999/headroom/releases/latest) and move it to Applications. Apple Silicon download; Intel Macs can build from source. Run the same command to update.

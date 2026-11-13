@@ -18,8 +18,8 @@ IFS=. read -r system_major system_minor _ <<< "$(sw_vers -productVersion)"
 temporary=$(mktemp -d "${TMPDIR:-/tmp}/headroom-install.XXXXXX")
 trap 'rm -rf "$temporary"' EXIT
 printf 'Downloading Headroom…\n'
-curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$release/$archive" -o "$temporary/$archive"
-curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$release/Headroom-SHA256SUMS.txt" -o "$temporary/checksums"
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --retry 3 --retry-delay 1 --retry-connrefused --connect-timeout 10 --max-time 90 "$release/$archive" -o "$temporary/$archive"
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --retry 3 --retry-delay 1 --retry-connrefused --connect-timeout 10 --max-time 90 "$release/Headroom-SHA256SUMS.txt" -o "$temporary/checksums"
 expected=$(awk '$2 == "Headroom-macOS-arm64.zip" { print $1 }' "$temporary/checksums")
 actual=$(shasum -a 256 "$temporary/$archive" | awk '{ print $1 }')
 [[ ${#expected} == 64 && "$actual" == "$expected" ]] || { echo 'Download checksum did not match.' >&2; exit 1; }
